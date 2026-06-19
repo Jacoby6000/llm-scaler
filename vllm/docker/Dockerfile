@@ -32,6 +32,48 @@ RUN apt-get update -y && \
         linux-libc-dev && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# ---- Fix multi-GPU (dual+ Arc B-series / Battlemage) device discovery ----
+# The base platform image ships compute-runtime / Level-Zero 25.48.x, which lacks
+# the multi-device-context fix. On hosts with >1 Battlemage GPU (e.g. 2x Arc Pro
+# B70, 0xe223), the L0 V2 adapter's eager peer-residency handshake during
+# urContextCreate fails, so torch.xpu.device_count() throws
+# UR_RESULT_ERROR_UNKNOWN (2147483646) and vLLM TP>1 cannot start.
+# Single-GPU is unaffected. See intel/llm-scaler#463 and
+# intel/compute-runtime#921 / #916.
+#
+# compute-runtime >= 26.22.38646.4 is the first release that contains:
+#   * e91243a9 ("validate peer access with makeResident on imported BO")
+#       -> fixes device discovery / multi-device sycl::context even on the
+#          pre-7.1 host kernels currently shipped by this stack.
+#   * 258518f8 ("decompress P2P source allocation on peer cache hit")
+#       -> fixes cross-device P2P corruption/OOM, but that part ALSO requires a
+#          host kernel >= 7.1 (xe dma-buf MOVE_NOTIFY / peer-bind fixes).
+# IGC must match the compute-runtime release; 26.22.38646.4 is built/validated
+# against IGC v2.36.3 (see the compute-runtime release notes).
+ARG NEO_VERSION=26.22.38646.4
+ARG GMM_VERSION=22.10.0
+ARG IGC_VERSION=2.36.3
+ARG IGC_BUILD=21719
+RUN cd /tmp && \
+    neo="https://github.com/intel/compute-runtime/releases/download/${NEO_VERSION}" && \
+    igc="https://github.com/intel/intel-graphics-compiler/releases/download/v${IGC_VERSION}" && \
+    wget -q "${igc}/intel-igc-core-2_${IGC_VERSION}+${IGC_BUILD}_amd64.deb" && \
+    wget -q "${igc}/intel-igc-opencl-2_${IGC_VERSION}+${IGC_BUILD}_amd64.deb" && \
+    wget -q "${neo}/intel-opencl-icd_${NEO_VERSION}-0_amd64.deb" && \
+    wget -q "${neo}/libze-intel-gpu1_${NEO_VERSION}-0_amd64.deb" && \
+    wget -q "${neo}/intel-ocloc_${NEO_VERSION}-0_amd64.deb" && \
+    wget -q "${neo}/libigdgmm12_${GMM_VERSION}_amd64.deb" && \
+    apt-get update && \
+    apt-get install -y --allow-downgrades \
+        "./intel-igc-core-2_${IGC_VERSION}+${IGC_BUILD}_amd64.deb" \
+        "./intel-igc-opencl-2_${IGC_VERSION}+${IGC_BUILD}_amd64.deb" \
+        "./libigdgmm12_${GMM_VERSION}_amd64.deb" \
+        "./intel-opencl-icd_${NEO_VERSION}-0_amd64.deb" \
+        "./libze-intel-gpu1_${NEO_VERSION}-0_amd64.deb" \
+        "./intel-ocloc_${NEO_VERSION}-0_amd64.deb" && \
+    rm -f /tmp/*.deb && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 
 # Configure environment to source oneAPI
 # RUN echo "source /opt/intel/oneapi/setvars.sh --force" >> /root/.bashrc && \
