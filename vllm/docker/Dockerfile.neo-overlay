@@ -1,0 +1,48 @@
+# Copyright (C) 2025 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+#
+# Multi-GPU device-discovery fix as a thin OVERLAY on the prebuilt vLLM image.
+#
+# Use this when you want the dual+ Arc B-series (Battlemage) device-discovery fix
+# WITHOUT rebuilding vLLM from source. It derives from the published
+# intel/llm-scaler-vllm image and only swaps the Intel GPU user-mode driver
+# (compute-runtime / Level-Zero + matching IGC) up to a release that contains the
+# multi-device-context fix.
+#
+# Why an overlay instead of docker/Dockerfile:
+#   * The fix (compute-runtime e91243a9, first in NEO >= 26.22.38646.4) is purely
+#     a runtime package swap. The already-compiled vLLM / vllm-xpu-kernels / ESIMD
+#     wheels in the base image load via Level Zero / UR at runtime and do NOT need
+#     rebuilding.
+#   * Building vllm-xpu-kernels from source currently hits a deterministic oneAPI
+#     2025.3.2 icpx compiler crash (ICE) on CUTLASS-cute attention templates that
+#     is unrelated to this fix. The overlay avoids compiling anything.
+#
+# See intel/llm-scaler#463 and intel/compute-runtime#921 / #916.
+#
+# Build (use a tiny context, e.g. this docker/ dir):
+#   cd vllm/docker
+#   docker buildx build -f Dockerfile.neo-overlay -t intel/llm-scaler-vllm:463-fix --load .
+
+ARG BASE_IMAGE=intel/llm-scaler-vllm:latest
+FROM ${BASE_IMAGE}
+
+# IGC must match the compute-runtime release; 26.22.38646.4 is built/validated
+# against IGC v2.36.3 (see the compute-runtime release notes).
+ARG NEO_VERSION=26.22.38646.4
+ARG GMM_VERSION=22.10.0
+ARG IGC_VERSION=2.36.3
+ARG IGC_BUILD=21719
+RUN cd /tmp && \
+    neo="https://github.com/intel/compute-runtime/releases/download/${NEO_VERSION}" && \
+    igc="https://github.com/intel/intel-graphics-compiler/releases/download/v${IGC_VERSION}" && \
+    wget -q "${igc}/intel-igc-core-2_${IGC_VERSION}+${IGC_BUILD}_amd64.deb" && \
+    wget -q "${igc}/intel-igc-opencl-2_${IGC_VERSION}+${IGC_BUILD}_amd64.deb" && \
+    wget -q "${neo}/intel-opencl-icd_${NEO_VERSION}-0_amd64.deb" && \
+    wget -q "${neo}/libze-intel-gpu1_${NEO_VERSION}-0_amd64.deb" && \
+    wget -q "${neo}/intel-ocloc_${NEO_VERSION}-0_amd64.deb" && \
+    wget -q "${neo}/libigdgmm12_${GMM_VERSION}_amd64.deb" && \
+    (apt-get update || true) && \
+    apt-get install -y --allow-downgrades ./*.deb && \
+    rm -f /tmp/*.deb && \
+    (apt-get clean; rm -rf /var/lib/apt/lists/*)
