@@ -107,7 +107,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # Install unified custom ESIMD kernels (6 modules: core, lgrf, moe, gemm, eagle, moe_batch)
 RUN --mount=type=cache,target=/root/.cache/pip \
     cd /tmp/custom-esimd-kernels-vllm && \
-    TORCH_XPU_ARCH_LIST=bmg-g21 MAX_JOBS=1 python3 setup.py bdist_wheel && \
+    TORCH_XPU_ARCH_LIST=bmg-g31 MAX_JOBS=1 python3 setup.py bdist_wheel && \
     pip install dist/*.whl --no-deps && \
     rm -rf /tmp/custom-esimd-kernels-vllm
 
